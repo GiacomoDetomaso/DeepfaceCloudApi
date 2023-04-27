@@ -99,7 +99,7 @@ def represent():
                     f.write(b64decode(img.encode('utf-8')))
 
                 # Pass the base64 image to the represent function
-                representation: dict = get_embeddings(img_path=f.name, detector_backend='ssd', model_name='Facenet')
+                representation: dict = get_embeddings(img_path=f.name, detector_backend='retinaface', model_name='Facenet')
 
                 # The base image must contain just one face
                 if len(representation) > 1:
