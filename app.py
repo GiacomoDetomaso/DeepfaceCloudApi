@@ -14,12 +14,12 @@ def home():
 def represent():
     '''
         This method gives a representation of the face in the input image
-        using Facenet as face recognition model.
-            - img: a base64 encoded image that must contain a single face
+        using Facenet as face recognition model. The representation must be 
+        unique and it is stored in the Azure storage
+            - img:      a base64 encoded image that must contain a single face
             - username: the username that represent a univoque identity of the input face
-            - info: additional info about the identity
-        Returns: 
-            - a message that determines the status of the request
+            - info:     additional info about the identity
+        Returns:        a message that determines the status of the request
     '''
     message = {'message': 'You must send a json request, or request you have sent is empty'}
 
@@ -34,34 +34,54 @@ def represent():
         img: str = input_arg.get('img')
         username: str = input_arg.get('username')
         info: str = input_arg.get('info')
+        
+        # TODO: CHECK IF THE IMG IS B64 BEFORE DOING ANY OPERATION
 
         is_input_correct, message = _check_represent_input(img, username, info, message)
         
         # Execute all the processing of the image to find the representation only 
         # if the input values are correct
         if is_input_correct is True:
-
+            
+            # Create a local temporary file, decoding the input base64 image
             with open('img.jpg', 'wb') as f:
                 f.write(b64decode(img.encode('utf-8')))
 
             face_representation = FaceRepresentation(username, info)
+            
+            # Manage the exceptions that could occur
+            try:
+                if face_representation.generate_representation_single_face(f.name, 'retinaface', 'Facenet'):
+                    # If the representation's embedding is generated, the manager could 
+                    # be initialized
+                    manager = FaceRepresentationManager.init_upload(face_representation)
 
-            if face_representation.generate_representation_single_face(f.name, 'retinaface', 'Facenet'):
-                manager = FaceRepresentationManager.init_upload(face_representation)
-
-                if manager.upload_representation():
-                    message = {'message': 'Representation generated'}
+                    # Upload the representation to the stoage and ckech the result to 
+                    # return the correct response message to the client
+                    if manager.upload_representation():
+                        message = {'message': 'Representation generated'}
+                    else:
+                        message = {'message': 'Representation not generated: duplicated username'}
                 else:
-                    message = {'message': 'Representation not generated: duplicated username'}
-            else:
-                message = {'message': 'Could not create a representation: no face or multiple faces detected'}
+                    message = {'message': 'Could not create a representation: multiple faces detected'}
+            except ValueError:
+                    message = {'message': 'Could not create a representation: no faces detected'}
+            except OSError:
+                    message = {'message': 'Could not create a representation: internal errors'}
 
-            remove(f.name)
+            remove(f.name) # clean temporary file
 
     return jsonify(message)
 
 @app.route('/find', methods=['POST'])
 def find():
+    '''
+        This method is used to find the representation with the closest representation
+        to the input one.
+        - img:  the input image encoded in base64
+        - Returns:  a message with the status of the request. If successful the username and info
+                    of the representation found are added to the response.
+    '''
     message = {'message': 'You must send a json request, or request you have sent is empty'}
 
     if request.is_json:
@@ -73,29 +93,38 @@ def find():
         
         img: str = input_arg.get('img')
 
-        # Wrong input
+        # Wrong input: img not setted or empty
         if img is None or not img:
             return {'message': 'wrong argument passed'}
 
         # TODO: CHECK IMAGE INPUT
-        # Decode the image from the base64 format and create the temp file
+        
+        # Decode the image from the base64 format and create the temporary file
         with open('img.jpg', 'wb') as f:
             f.write(b64decode(img.encode('utf-8')))
 
-        rep = FaceRepresentation()
+        rep = FaceRepresentation() # instantiate an unknown representation
 
-        if rep.generate_representation_single_face(f.name, 'retinaface', 'Facenet'):
-            manager = FaceRepresentationManager.init_upload(rep)
-            rep = manager.find_closest_representation()
-        else:
-            rep = None
+        try:
+            if rep.generate_representation_single_face(f.name, 'retinaface', 'Facenet'):
+                manager = FaceRepresentationManager.init_upload(rep)
+                rep = manager.find_closest_representation()
+            else:
+                rep = None
 
-        if rep is None:
-            message = {'message': 'Cannot find any close representation'}
-        else:
-            message = {'message': 'Success!', 'username': rep.username, 'info': rep.info}
+            # If the closest representation is correctly found determines the correct
+            # repsonse message to send to the client
+            if rep is None:
+                message = {'message': 'Cannot find any close representation'}
+            else:
+                message = {'message': 'Success!', 'username': rep.username, 'info': rep.info}
+                
+        except ValueError:
+                message = {'message': 'Could not create a representation: no faces detected'}
+        except OSError:
+                message = {'message': 'Could not create a representation: internal errors'}
 
-        remove(f.name)
+        remove(f.name) # clean temporary file
 
     return jsonify(message)
 
