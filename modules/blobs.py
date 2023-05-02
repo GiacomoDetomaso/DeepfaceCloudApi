@@ -13,7 +13,7 @@ class BlobManager:
         # Use a token to access Azure resources instead
         token_credential = ManagedIdentityCredential()
         
-        if self.connection_string is 'skip':
+        if self.connection_string == 'skip':
             # Create the blob service client using the token
             blob_service_client = BlobServiceClient(
                 account_url="https://deepfacestorage.blob.core.windows.net",

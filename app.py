@@ -1,8 +1,7 @@
 from flask import Flask, render_template, request, jsonify
-from deepface.DeepFace import represent as get_embeddings
 from json import loads
 from base64 import b64decode
-from modules.blobs import BlobManager
+from os import remove
 from modules.operations import FaceRepresentation, FaceRepresentationManager
 
 app = Flask(__name__)
@@ -48,11 +47,55 @@ def represent():
             face_representation = FaceRepresentation(username, info)
 
             if face_representation.generate_representation_single_face(f.name, 'retinaface', 'Facenet'):
-                manager = FaceRepresentationManager(face_representation)
-                manager.upload_representation()
-                message = {'message': 'Representation generated'}
+                manager = FaceRepresentationManager.init_upload(face_representation)
+
+                if manager.upload_representation():
+                    message = {'message': 'Representation generated'}
+                else:
+                    message = {'message': 'Representation not generated: duplicated username'}
             else:
                 message = {'message': 'Could not create a representation: no face or multiple faces detected'}
+
+            remove(f.name)
+
+    return jsonify(message)
+
+@app.route('/find', methods=['POST'])
+def find():
+    message = {'message': 'You must send a json request, or request you have sent is empty'}
+
+    if request.is_json:
+        input_arg: dict = loads(request.get_data())
+
+        # No arguments passed
+        if input_arg is None:
+           return {'message': 'empty input set passed'}
+        
+        img: str = input_arg.get('img')
+
+        # Wrong input
+        if img is None or not img:
+            return {'message': 'wrong argument passed'}
+
+        # TODO: CHECK IMAGE INPUT
+        # Decode the image from the base64 format and create the temp file
+        with open('img.jpg', 'wb') as f:
+            f.write(b64decode(img.encode('utf-8')))
+
+        rep = FaceRepresentation()
+
+        if rep.generate_representation_single_face(f.name, 'retinaface', 'Facenet'):
+            manager = FaceRepresentationManager.init_upload(rep)
+            rep = manager.find_closest_representation()
+        else:
+            rep = None
+
+        if rep is None:
+            message = {'message': 'Cannot find any close representation'}
+        else:
+            message = {'message': 'Success!', 'username': rep.username, 'info': rep.info}
+
+        remove(f.name)
 
     return jsonify(message)
 
