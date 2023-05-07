@@ -54,7 +54,7 @@ class BlobManager:
             - blob_file_name: the name of the blob file. If the blob is successfuly downloaded 
             this will be the name of the local file too
             - Returns: a boolean value to specify the correctness of the operation
-            - rais: ResourceNotFoundError if the specified blob doe not exists
+            - raise: ResourceNotFoundError if the specified blob doe not exists
         '''
         can_download = True # Specify if the resource is downloadable
 

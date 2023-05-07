@@ -1,10 +1,12 @@
-from deepface.DeepFace import represent
+from deepface.DeepFace import represent, extract_faces
 from deepface.commons.distance import findThreshold, findCosineDistance, findEuclideanDistance
 from numpy import argmin
 from modules.blobs import BlobManager
 from os import remove
 from os.path import isfile
+
 import pickle
+import time
 
 # If this costant is setted, the input parameter is skipped. It is primarly used
 # on the username and info input parameter in the FaceRepresentation class. That's 
@@ -21,7 +23,7 @@ REPRESENTATIONS_BLOB = 'representations.pkl'
 
 class FaceRepresentation:
 
-    def __init__(self, username=SKIP, info=SKIP) -> None:
+    def __init__(self, username=SKIP, info=SKIP, embedding=SKIP) -> None:
         '''
             - username: the identity of the representation
             - info:     additonal informations
@@ -31,69 +33,72 @@ class FaceRepresentation:
         '''
         self.username = username
         self.info = info
-        self.embedding = None
+        self.embedding = embedding
 
-    def generate_representation_single_face(self, img, backend, model) -> bool:
+
+class DeepFaceWrapper:
+
+    def __init__(self, img, backend, model) -> None:
         '''
-            - img:      the img whose representation will be generated. This could be a path 
+            - img:  the img whose representation will be generated. This could be a path 
                         to an existing file, or a numpy array
             - backend:  specify which face detector backend to use
             - model:    specify the model used to generate the emnedding
-            - Returns:  True if the representation is generated, False if more than one face 
-                        is detected
-            - raise:    ValueError if no embeddings for the input image are found,
-                        OSError if the img_path doe not exist
-        '''
+        '''        
         if isinstance(img, str) and not isfile(img):
             raise OSError('The file does not exist')
-        
-        ret = True
-        
-        # Raise a value error if the face could not be detected
-        representation: dict = represent(img_path=img, detector_backend=backend, model_name=model)
-        
-        # The image must contains a single face
-        if len(representation) == 1:
-            embedding = representation[0]['embedding'] # extracts the face embedding
-            facial_area = representation[0]['facial_area'] # extract face box coordinates
-                
-            # Set the embedding 
-            self.embedding = embedding
-
-            # Set face points
-            self.x1 = facial_area['x']
-            self.y1 = facial_area['y']
-            self.x2 = facial_area['x'] + facial_area['w']
-            self.y2 = facial_area['y'] + facial_area['h']
-        else: 
-            ret = False
-
-        return ret
     
+        self.img = img
+        self.backend = backend
+        self.model = model
+
+    def generate_embeddings(self):   
+        '''
+            This method generates all the embeddings for faces found in the image
+            and returns it.
+            - Returns: the list of embeddings. The number of elements is the number of found faces
+        '''     
+        tic = time.time()
+
+        representations = represent(img_path=self.img, detector_backend=self.backend, model_name=self.model)
+        embeddings = list()
+
+        for rep in representations:
+            embeddings.append(rep['embedding'])
+
+        tac = time.time()
+
+        print("Spent time generating representation: {}".format(tac - tic))
+
+        return embeddings
+    
+    def extract_facial_areas(self):
+        '''
+            This method generates the coordinates of the faces found in the pictures
+                - Returns: a list of dictionary with the coordinates (x1, y1) and (x2, y2) for all the faces found
+        '''
+        faces = extract_faces(img_path=self.img, detector_backend=self.backend)
+        coordinates = list()
+
+        for face in faces:
+            entry = dict()
+            facial_area = face['facial_area']
+            
+            # Set face points
+            entry['x1'] = facial_area['x']
+            entry['y1'] = facial_area['y']
+            entry['x2'] = facial_area['x'] + facial_area['w']
+            entry['y2'] = facial_area['y'] + facial_area['h']
+
+            coordinates.append(entry)
+
+        return coordinates
+    
+ 
 class FaceRepresentationManager:
     
-    def __init__(self, rep) -> None:
-        '''
-            Do not instatiante the manager normally, use classmethod init_upload
-        '''
+    def __init__(self) -> None:
         self.blob_manager = BlobManager(CONTAINER_NAME) # Get an instance of the blob manager
-        self.rep = rep
-
-    @classmethod
-    def init_upload(cls, face_rep: FaceRepresentation):
-        '''
-            - face_rep: the FaceRepresentation to manage
-            - raise:    ValueError if the object is not FaceRepresentation
-                        ValueError if the object has no embeddings generated
-        '''
-        if not isinstance(face_rep, FaceRepresentation):
-            raise ValueError('You must pass a FaceRepresentation object')
-        
-        # Raise an error if a FaceRepresentation without the face represented is passed
-        if face_rep.embedding is None:
-            raise ValueError("You must load the face representation before passing this object to the manager")
-        
-        return cls(face_rep)
     
     def __clean_temp_file(self):
         '''
@@ -105,19 +110,18 @@ class FaceRepresentationManager:
         if isfile(REPRESENTATIONS_BLOB):
             remove(REPRESENTATIONS_BLOB)
 
-    def upload_representation(self) -> bool:
+    def upload_representation(self, rep: FaceRepresentation) -> bool:
         '''
             This method is used to upload the FaceRepresentation
             to the Blob storage on Azure.
-            - Return: a boolean value
-        '''
-        # TODO: refactor logic to count as duplicates equal embeddings
-        
-        if self.rep.username is SKIP or self.rep.info is SKIP:
-            raise ValueError('Could not perform this action. Username and info are setted as SKIP')
+                - rep:      the FaceRepresentation to upload
+                - Return:   a boolean value
+        '''        
+        if rep.username is SKIP or rep.info is SKIP or rep.embedding is SKIP:
+            raise ValueError('Could not perform this action. Username and info are setted as SKIP, or embedding is not evaluatd')
 
         # Register the username if it is not duplicated
-        is_username_free = self.__register_username(self.rep.username)
+        is_username_free = self.__register_username(rep.username)
 
         if is_username_free:
             # Read the pkl representation file
@@ -133,7 +137,7 @@ class FaceRepresentationManager:
                 representations: list = list()
 
             # Append the new representation    
-            representations.append(self.rep)
+            representations.append(rep)
 
             # Update the pickle file
             with open(REPRESENTATIONS_BLOB, 'wb') as f:
@@ -149,50 +153,84 @@ class FaceRepresentationManager:
         # not implemented yet
         pass
 
-    def find_closest_representation(self, metric='cosine') -> FaceRepresentation:
+    def verify_identity(self, source: FaceRepresentation, target_username: str, 
+                        model='Facenet512', metric='euclidean') -> bool:
+        '''
+            This method is used to verify if the source representazione corresponds
+            to the target representation identified by the username. It's a verification-like task.
+                - source: the source representation to be verified
+                - target_username: the unique id of the representation which will be evaluated against source
+                - return: a boolean value according to the operation status
+                - raise: StopIteration if the target_username does not exist
+        '''
+        contains = False
+
+        if self.blob_manager.download_blob_to_file(REPRESENTATIONS_BLOB):
+            # Get the target representation
+            with open(REPRESENTATIONS_BLOB, 'rb') as f:
+                all_representation: list = pickle.loads(f.read())
+            
+            # Get if it exsists the unique representation with the target username
+            target: FaceRepresentation = next(rep for rep in all_representation if rep.username == target_username)
+
+            treshold = findThreshold(model, metric)
+
+            contains = findEuclideanDistance(source.embedding, target.embedding) <= treshold
+
+        self.__clean_temp_file()
+        
+        return contains
+        
+
+    def find_closest_representations(self, unknown_representations: list, 
+                                     metric='euclidean', model='Facenet512') -> list:
         '''
             This method is used to find the FaceRepresentation 
             whose embeddings are the closest possible to the FaceRepresentation 
             setted as input of the class, during init operations
-            - metric:   the metric used to evaluate the distance between the representations. 
-                        [cosine, euclidean]
-            - return:   the class input FaceRepresentation object with the username and info field 
-                        evaluated with the ones of the closest FaceReresentation found in the storage. 
-                        None otherwise.
+                - metric:   the metric used to evaluate the distance between the representations. 
+                            [cosine, euclidean]
+                - return:   a list of the found identies from the input FaceRepresentation list.
         '''
-        found_representation = None
+        found_identities = list()
         
+        tic = time.time()
         is_downloaded = self.blob_manager.download_blob_to_file(REPRESENTATIONS_BLOB)
+        tac = time.time()
 
         if is_downloaded:
+            print(f'Downloaded representations data in {str(tac - tic)} seconds')
             with open(REPRESENTATIONS_BLOB, 'rb') as f:
-                all_face_representations = pickle.loads(f.read())
+                known_representations = pickle.loads(f.read())
 
-            treshold = findThreshold(model_name='Facenet', distance_metric=metric)
+            treshold = findThreshold(model_name=model, distance_metric=metric)
             found_distances = list()
 
-            for representation in all_face_representations:
-                distance = findCosineDistance(representation.embedding, self.rep.embedding)
-                found_distances.append(distance)
-            
-            # Find the index of the lowest distance
-            if len(found_distances) == 1:
-                min_dist_index = 0
-            elif len(found_distances) > 1:
-                min_dist_index = argmin(found_distances)
-            
-            if found_distances[min_dist_index] <= treshold:
-                # Get the index of the minimum distance found during the process and extract the representation
-                found_representation: FaceRepresentation = all_face_representations[min_dist_index]
+            for i, unknown in enumerate(unknown_representations):
+                # For every unknown input representation, calculate the distances
+                # againt all the known representations
+                for j, known in enumerate(known_representations):
+                    distance = findEuclideanDistance(known.embedding, unknown.embedding)
+                    found_distances.append(distance)
+                    print(f'{i} : {j} - {distance}')
                 
-                # Evaluate the class input FaceRepresentation with the missing values and returns it
-                self.rep.username = found_representation.username
-                self.rep.info = found_representation.info
+                # Find the index of the lowest distance
+                if len(found_distances) == 1:
+                    min_dist_index = 0
+                elif len(found_distances) > 1:
+                    min_dist_index = argmin(found_distances)
+                
+                if found_distances[min_dist_index] <= treshold:
+                    # Get the index of the minimum distance found during the process and extract the representation
+                    entry: FaceRepresentation = known_representations[min_dist_index]
+                    found_identities.append(f'{entry.username} - {entry.info}')
+                    print(f'Generated identiy for {i} - with min distance {found_distances[min_dist_index]}')
+                    found_distances.clear()
 
         self.__clean_temp_file()
-        
-        return found_representation
 
+        return found_identities
+        
     def __register_username(self, username) -> bool:
         '''
             - username: the username to check
@@ -217,10 +255,3 @@ class FaceRepresentationManager:
             self.blob_manager.upload_blob(USERNAMES_BLOB)
 
         return flag
-    
-    def __is_representation_embedding_unique(self, all_rep: list):
-        for rep in all_rep:
-            if self.rep.embedding == rep.embedding:
-                return False
-            
-        return True
