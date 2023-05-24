@@ -99,7 +99,7 @@ class DeepFaceWrapper:
 class FaceRepresentationManager:
 
     def __init__(self, container_name=CONTAINER_NAME) -> None:
-        self.blob_manager = BlobManager(container_name, connection_string=CONNECTION_STRING)  # Get an instance of the blob manager
+        self.blob_manager = BlobManager(container_name)  # Get an instance of the blob manager
 
     @staticmethod
     def __clean_temp_file():
