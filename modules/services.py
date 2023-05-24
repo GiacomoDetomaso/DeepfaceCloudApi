@@ -6,8 +6,34 @@ from cv2 import imread, imwrite, rectangle
 BACKEND = 'mtcnn'
 MODEL = 'Facenet512'
 
+# Defines the common keys of reply messages
+KEY_MESSAGE = 'message'
+KEY_STATUS = 'status'
+KEY_FOUNDED_IDS = 'founded_ids'
+KEY_COORDINATES = 'coordinates'
+KEY_IMG_B64 = 'img_b64'
+
+# Defines common values of status key
+STATUS_FAIL = 'fail'
+STATUS_SUCCESS = 'success'
+
+# Defines default messages
+NO_JSON_MESSAGE = 'You must send a json request, or request you have sent is empty'
+EMPTY_MESSAGE = 'Empty input set passed'
+ALL_VALUES_NOT_PASSED_MESSAGE = 'You must pass all values in order to perform this action'
+BASE64_ERROR_MESSAGE = 'Input image is not base64 encoded'
+
+# Defines json input param names
+JSON_IMG = 'img'
+JSON_USERNAME = 'username'
+JSON_IDENTITY = 'identity'
+JSON_INFO = 'info'
+
+# Path to temporary file
+TEMP_IMG = 'img.jpg'
+
 # The manager to execute all the operations regarding a FaceRepresentation
-manager = FaceRepresentationManager()
+_manager = FaceRepresentationManager()
 
 
 def upload_representation(file_name: str, username: str, info: str) -> dict:
@@ -23,19 +49,23 @@ def upload_representation(file_name: str, username: str, info: str) -> dict:
         embeddings = wrapper.generate_embeddings()
 
         if len(embeddings) > 1:
-            message = {'message': 'Could not create a representation: multiple faces detected'}
+            message = {KEY_MESSAGE: 'Could not create a representation: multiple faces detected', 
+                       KEY_STATUS: STATUS_FAIL}
         else:
             face_representation = FaceRepresentation(username, info, embeddings[0])
 
             # Upload the representation to the storage and check the result to
             # return the correct response message to the client
-            if manager.upload_representation(face_representation):
-                message = {'message': 'Representation generated'}
+            if _manager.upload_representation(face_representation):
+                message = {KEY_MESSAGE: 'Representation generated',
+                           KEY_STATUS: STATUS_SUCCESS}
             else:
-                message = {'message': 'Representation not generated: duplicated username'}
+                message = {KEY_MESSAGE: 'Representation not generated: duplicated username',
+                           KEY_STATUS: STATUS_FAIL}
 
     except ValueError:
-        message = {'message': 'Could not create a representation: no faces detected'}
+        message = {KEY_MESSAGE: 'Could not create a representation: no faces detected',
+                   KEY_STATUS: STATUS_FAIL}
 
     return message
 
@@ -58,19 +88,24 @@ def find_representations(file_name: str) -> dict:
         for embedding in embeddings:
             unknown_face_representations.append(FaceRepresentation(embedding=embedding))
 
-        ids = manager.find_closest_representations(unknown_face_representations, model=MODEL)
+        ids = _manager.find_closest_representations(unknown_face_representations, model=MODEL)
 
         # If the closest representation is correctly found determines the correct
         # repsonse message to send to the client
         if len(ids) == 0:
-            message = {'message': 'Cannot find any close representation'}
+            message = {KEY_MESSAGE: 'Cannot find any close representation',
+                       KEY_STATUS: STATUS_FAIL}
         else:
-            message = {'message': 'Success!', 'founded_ids': ids}
+            message = {KEY_MESSAGE: 'Representation found',
+                       KEY_STATUS: STATUS_SUCCESS, 
+                       KEY_FOUNDED_IDS: ids}
 
     except ValueError:
-        message = {'message': 'Could not create a representation: no faces detected'}
+        message = {KEY_MESSAGE: 'Could not create a representation: no faces detected',
+                   KEY_STATUS: STATUS_FAIL}
     except OSError:
-        message = {'message': 'Could not create a representation: internal errors'}
+        message = {KEY_MESSAGE: 'Could not create a representation: internal errors',
+                   KEY_STATUS: STATUS_FAIL}
 
     return message
 
@@ -86,17 +121,21 @@ def verify_representation(file_name: str, username: str) -> dict:
     """
     wrapper = DeepFaceWrapper(file_name, BACKEND, MODEL)
     embeddings = wrapper.generate_embeddings()
+    rep_list: list = list()
 
-    if len(embeddings) == 1:
-        face_representation = FaceRepresentation(embedding=embeddings[0])
+    print(f'{len(embeddings)} embeddings found in this image')
+    
+    for embedding in embeddings:
+        rep_list.append(FaceRepresentation(embedding=embedding))
 
-        try:
-            val = manager.verify_identity(face_representation, username)
-            message = {'message': str(val)}
-        except StopIteration:  # This exception is raised if the input username does not exsist
-            message = {'message': 'The identity provided does not exsists'}
-    else:
-        message = {'message': 'Could not create a representation: multiple faces detected'}
+    try:
+        val = _manager.verify_identity(rep_list, username)
+        message = {KEY_MESSAGE: str(val), 
+                   KEY_STATUS: STATUS_SUCCESS}
+    except StopIteration: 
+        # This exception is raised if the input username does not exsist 
+        message = {KEY_MESSAGE: 'The identity provided does not exsists', 
+                   KEY_STATUS: STATUS_FAIL}
 
     return message
 

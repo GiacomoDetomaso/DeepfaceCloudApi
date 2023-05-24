@@ -99,7 +99,7 @@ class DeepFaceWrapper:
 class FaceRepresentationManager:
 
     def __init__(self, container_name=CONTAINER_NAME) -> None:
-        self.blob_manager = BlobManager(container_name)  # Get an instance of the blob manager
+        self.blob_manager = BlobManager(container_name, connection_string=CONNECTION_STRING)  # Get an instance of the blob manager
 
     @staticmethod
     def __clean_temp_file():
@@ -156,12 +156,12 @@ class FaceRepresentationManager:
         # not implemented yet
         pass
 
-    def verify_identity(self, source: FaceRepresentation, target_username: str,
+    def verify_identity(self, source_representations: list, target_username: str,
                         model='Facenet512', metric='euclidean') -> bool:
         """
             This method is used to verify if the source representation corresponds
             to the target representation identified by the username. It's a verification-like task.
-                - source: the source representation to be verified
+                - source: the source list of representations to be verified
                 - target_username: the unique id of the representation which will be evaluated against source
                 - return: a boolean value according to the operation status
                 - raise: StopIteration if the target_username does not exist
@@ -177,8 +177,15 @@ class FaceRepresentationManager:
             target: FaceRepresentation = next(rep for rep in all_representation if rep.username == target_username)
 
             treshold = findThreshold(model, metric)
+            
+            found_distances: list = []
 
-            contains = findEuclideanDistance(source.embedding, target.embedding) <= treshold
+            for source in source_representations:
+                found_distances.append(findEuclideanDistance(source.embedding, target.embedding))
+
+            # If the min distance is less than the treshold value then the input 
+            # representation contains the target identity
+            contains = min(found_distances) <= treshold
 
         self.__clean_temp_file()
 
@@ -217,16 +224,13 @@ class FaceRepresentationManager:
                     found_distances.append(distance)
                     print(f'{i} : {j} - {distance}')
 
-                if len(found_distances) == 0:
-                    raise ValueError('Could not detect any distance')
-
                 # Find the index of the lowest distance
                 if len(found_distances) == 1:
                     min_dist_index = 0
-                else:
+                elif len(found_distances) > 1:
                     min_dist_index = argmin(found_distances)
 
-                if found_distances[min_dist_index] <= treshold:
+                if len(found_distances) > 0 and found_distances[min_dist_index] <= treshold :
                     # Get the index of the minimum distance found during the process and extract the representation
                     entry: FaceRepresentation = known_representations[min_dist_index]
                     found_identities.append(f'{entry.username} - {entry.info}')
@@ -236,6 +240,7 @@ class FaceRepresentationManager:
         self.__clean_temp_file()
 
         return found_identities
+    
 
     def __register_username(self, username) -> bool:
         """
