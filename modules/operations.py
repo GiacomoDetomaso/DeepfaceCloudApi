@@ -21,7 +21,6 @@ USERNAMES_BLOB = 'usernames.pkl'
 # A constant that defines the name of the blob that contains all the representations
 REPRESENTATIONS_BLOB = 'representations.pkl'
 
-
 class FaceRepresentation:
 
     def __init__(self, username=SKIP, info=SKIP, embedding=SKIP) -> None:
@@ -157,39 +156,39 @@ class FaceRepresentationManager:
         pass
 
     def verify_identity(self, source_representations: list, target_username: str,
-                        model='Facenet512', metric='euclidean') -> bool:
-        """
-            This method is used to verify if the source representation corresponds
-            to the target representation identified by the username. It's a verification-like task.
-                - source: the source list of representations to be verified
-                - target_username: the unique id of the representation which will be evaluated against source
-                - return: a boolean value according to the operation status
-                - raise: StopIteration if the target_username does not exist
-        """
-        contains = False
+                            model='Facenet512', metric='euclidean') -> bool:
+            """
+                This method is used to verify if the source representation corresponds
+                to the target representation identified by the username. It's a verification-like task.
+                    - source: the source list of representations to be verified
+                    - target_username: the unique id of the representation which will be evaluated against source
+                    - return: a boolean value according to the operation status
+                    - raise: StopIteration if the target_username does not exist
+            """
+            contains = False
 
-        if self.blob_manager.download_blob_to_file(REPRESENTATIONS_BLOB):
-            # Get the target representation
-            with open(REPRESENTATIONS_BLOB, 'rb') as f:
-                all_representation: list = pickle.loads(f.read())
+            if self.blob_manager.download_blob_to_file(REPRESENTATIONS_BLOB):
+                # Get the target representation
+                with open(REPRESENTATIONS_BLOB, 'rb') as f:
+                    all_representation: list = pickle.loads(f.read())
 
-            # Get if it exsists the unique representation with the target username
-            target: FaceRepresentation = next(rep for rep in all_representation if rep.username == target_username)
+                # Get if it exsists the unique representation with the target username
+                target: FaceRepresentation = next(rep for rep in all_representation if rep.username == target_username)
 
-            treshold = findThreshold(model, metric)
-            
-            found_distances: list = []
+                treshold = findThreshold(model, metric)
+                
+                found_distances: list = []
 
-            for source in source_representations:
-                found_distances.append(findEuclideanDistance(source.embedding, target.embedding))
+                for source in source_representations:
+                    found_distances.append(findEuclideanDistance(source.embedding, target.embedding))
 
-            # If the min distance is less than the treshold value then the input 
-            # representation contains the target identity
-            contains = min(found_distances) <= treshold
+                # If the min distance is less than the treshold value then the input 
+                # representation contains the target identity
+                contains = min(found_distances) <= treshold
 
-        self.__clean_temp_file()
+            self.__clean_temp_file()
 
-        return contains
+            return contains
 
     def find_closest_representations(self, unknown_representations: list,
                                      metric='euclidean', model='Facenet512') -> list:
@@ -214,6 +213,9 @@ class FaceRepresentationManager:
                 known_representations = pickle.loads(f.read())
 
             treshold = findThreshold(model_name=model, distance_metric=metric)
+
+            # List that saves the distances scores of the i_th representation
+            # against all the ones, already stored in the storage. It must be
             found_distances = list()
 
             for i, unknown in enumerate(unknown_representations):
@@ -227,20 +229,23 @@ class FaceRepresentationManager:
                 # Find the index of the lowest distance
                 if len(found_distances) == 1:
                     min_dist_index = 0
-                elif len(found_distances) > 1:
+                else:
                     min_dist_index = argmin(found_distances)
+                    print(min_dist_index)
 
-                if len(found_distances) > 0 and found_distances[min_dist_index] <= treshold :
+                if len(found_distances) > 0 and found_distances[min_dist_index] <= treshold:
                     # Get the index of the minimum distance found during the process and extract the representation
                     entry: FaceRepresentation = known_representations[min_dist_index]
                     found_identities.append(f'{entry.username} - {entry.info}')
                     print(f'Generated identity for {i} - with min distance {found_distances[min_dist_index]}')
-                    found_distances.clear()
+                
+                # Clear the list at the end of cycle to save 
+                # the distances for the next input representation
+                found_distances.clear()
 
         self.__clean_temp_file()
 
         return found_identities
-    
 
     def __register_username(self, username) -> bool:
         """
