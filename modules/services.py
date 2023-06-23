@@ -1,6 +1,11 @@
-from modules.operations import FaceRepresentation, FaceRepresentationManager, DeepFaceWrapper
+from modules.operations import FaceRepresentation, FaceRecognizer, FaceRepresentationUploader
+from modules.blobs import AzureBlobManager
 from base64 import b64encode
 from cv2 import imread, imwrite, rectangle
+from os.path import isfile
+from deepface.DeepFace import represent, extract_faces
+
+import time
 
 # Defines the detector backend and face recognition model used in the api
 BACKEND = 'mtcnn'
@@ -32,8 +37,11 @@ JSON_INFO = 'info'
 # Path to temporary file
 TEMP_IMG = 'img.jpg'
 
+# A constant that defines the container of the blobs
+__CONTAINER_NAME = 'dfdb'
+
 # The manager to execute all the operations regarding a FaceRepresentation
-_manager = FaceRepresentationManager()
+_manager = AzureBlobManager(container_name=__CONTAINER_NAME)
 
 
 def upload_representation(file_name: str, username: str, info: str) -> dict:
@@ -53,10 +61,11 @@ def upload_representation(file_name: str, username: str, info: str) -> dict:
                        KEY_STATUS: STATUS_FAIL}
         else:
             face_representation = FaceRepresentation(username, info, embeddings[0])
+            uploader = FaceRepresentationUploader(_manager, face_representation)
 
             # Upload the representation to the storage and check the result to
             # return the correct response message to the client
-            if _manager.upload_representation(face_representation):
+            if uploader.upload_representation():
                 message = {KEY_MESSAGE: 'Representation generated',
                            KEY_STATUS: STATUS_SUCCESS}
             else:
@@ -87,8 +96,9 @@ def find_representations(file_name: str) -> dict:
         # Populate the unknown FaceRepresentation list with the embedding generated
         for embedding in embeddings:
             unknown_face_representations.append(FaceRepresentation(embedding=embedding))
-
-        ids = _manager.find_closest_representations(unknown_face_representations, model=MODEL)
+        
+        recognizer = FaceRecognizer(_manager, unknown_face_representations)
+        ids = recognizer.find_closest_representations()
 
         # If the closest representation is correctly found determines the correct
         # repsonse message to send to the client
@@ -127,9 +137,11 @@ def verify_representation(file_name: str, username: str) -> dict:
     
     for embedding in embeddings:
         rep_list.append(FaceRepresentation(embedding=embedding))
-
+    
+    recognizer = FaceRecognizer(_manager, rep_list
+                                )
     try:
-        val = _manager.verify_identity(rep_list, username)
+        val = recognizer.verify_identity(username)
         message = {KEY_MESSAGE: str(val), 
                    KEY_STATUS: STATUS_SUCCESS}
     except StopIteration: 
@@ -172,3 +184,62 @@ def extract_faces(file_name: str, return_image=False):
         return img
     else:
         return areas
+    
+
+class DeepFaceWrapper:
+
+    def __init__(self, img, backend, model) -> None:
+        """
+            - img:  the img whose representation will be generated. This could be a path
+                        to an existing file, or a numpy array
+            - backend:  specify which face detector backend to use
+            - model:    specify the model used to generate the embedding
+        """
+        if isinstance(img, str) and not isfile(img):
+            raise OSError('The file does not exist')
+
+        self.img = img
+        self.backend = backend
+        self.model = model
+
+    def generate_embeddings(self):
+        """
+            This method generates all the embeddings for faces found in the image
+            and returns it.
+            - Returns: the list of embeddings. The number of elements is the number of found faces
+        """
+        tic = time.time()
+
+        representations = represent(img_path=self.img, detector_backend=self.backend, model_name=self.model)
+        embeddings = list()
+
+        for rep in representations:
+            embeddings.append(rep['embedding'])
+
+        tac = time.time()
+
+        print("Spent time generating representation: {}".format(tac - tic))
+
+        return embeddings
+
+    def extract_facial_areas(self):
+        """
+            This method generates the coordinates of the faces found in the pictures
+                - Returns: a list of dictionary with the coordinates (x1, y1) and (x2, y2) for all the faces found
+        """
+        faces = extract_faces(img_path=self.img, detector_backend=self.backend)
+        coordinates = list()
+
+        for face in faces:
+            entry = dict()
+            facial_area = face['facial_area']
+
+            # Set face points
+            entry['x1'] = facial_area['x']
+            entry['y1'] = facial_area['y']
+            entry['x2'] = facial_area['x'] + facial_area['w']
+            entry['y2'] = facial_area['y'] + facial_area['h']
+
+            coordinates.append(entry)
+
+        return coordinates

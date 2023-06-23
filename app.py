@@ -192,8 +192,8 @@ def represent():
     return jsonify(message)
 
 
-@app.route('/find', methods=['POST'])
-def find():
+@app.route('/identify', methods=['POST'])
+def identify():
     """
         This method is used to find the representation with the closest representation
         to the input one.

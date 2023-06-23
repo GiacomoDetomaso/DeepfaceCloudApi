@@ -1,7 +1,6 @@
-from deepface.DeepFace import represent, extract_faces
 from deepface.commons.distance import findThreshold, findEuclideanDistance
 from numpy import argmin
-from modules.blobs import BlobManager
+from modules.blobs import ObjectPersistenceManager
 from os import remove
 from os.path import isfile
 
@@ -14,10 +13,10 @@ import time
 # FaceRepresentationManager just needs the embeddings of the input image to find
 # the closest FaceRepresentation object.
 SKIP = 'skip'
-# A constant that defines the container of the blobs
-CONTAINER_NAME = 'dfdb'
+
 # A constant that defines the name of the blob that contains all the usernames
 USERNAMES_BLOB = 'usernames.pkl'
+
 # A constant that defines the name of the blob that contains all the representations
 REPRESENTATIONS_BLOB = 'representations.pkl'
 
@@ -36,69 +35,58 @@ class FaceRepresentation:
         self.embedding = embedding
 
 
-class DeepFaceWrapper:
+class FaceRepresentationDeleter:
+    pass
 
-    def __init__(self, img, backend, model) -> None:
+class FaceRepresentationUploader:
+    def __init__(self, persistence_manager: ObjectPersistenceManager, rep: FaceRepresentation) -> None:
         """
-            - img:  the img whose representation will be generated. This could be a path
-                        to an existing file, or a numpy array
-            - backend:  specify which face detector backend to use
-            - model:    specify the model used to generate the embedding
+            - persistence_manager: the specific storage manager, used to upload the FaceRepresentation
+            - rep: the representation to upload
         """
-        if isinstance(img, str) and not isfile(img):
-            raise OSError('The file does not exist')
+        self.persistence_manager = persistence_manager
+        self.rep = rep
 
-        self.img = img
-        self.backend = backend
-        self.model = model
+        if rep.username is SKIP or rep.info is SKIP or rep.embedding is SKIP:
+            raise ValueError('Could not perform this action. Username and info are setted as SKIP, or embedding is '
+                             'not evaluated')
 
-    def generate_embeddings(self):
+
+    def upload_representation(self) -> bool:
         """
-            This method generates all the embeddings for faces found in the image
-            and returns it.
-            - Returns: the list of embeddings. The number of elements is the number of found faces
+            This method is used to upload the FaceRepresentation
+            to the Blob storage on Azure.
+                - Return:   a boolean value
         """
-        tic = time.time()
+        # Register the username if it is not duplicated
+        is_username_free = self.__register_username(self.rep.username)
 
-        representations = represent(img_path=self.img, detector_backend=self.backend, model_name=self.model)
-        embeddings = list()
+        if is_username_free:
+            # Read the pkl representation file
+            is_downloadable = self.persistence_manager.download(REPRESENTATIONS_BLOB)
 
-        for rep in representations:
-            embeddings.append(rep['embedding'])
+            # If the data can be downloaded, open the file and extract 
+            # the FaceRepresentations using pickle
+            if is_downloadable:
+                with open(REPRESENTATIONS_BLOB, 'rb') as f:
+                    representations: list = pickle.loads(f.read())
+            else:
+                # Instantiate an empty list if the file is not created
+                representations: list = list()
 
-        tac = time.time()
+            # Append the new representation    
+            representations.append(self.rep)
 
-        print("Spent time generating representation: {}".format(tac - tic))
+            # Update the pickle file
+            with open(REPRESENTATIONS_BLOB, 'wb') as f:
+                f.write(pickle.dumps(representations))
 
-        return embeddings
+            self.persistence_manager.upload(REPRESENTATIONS_BLOB)
 
-    def extract_facial_areas(self):
-        """
-            This method generates the coordinates of the faces found in the pictures
-                - Returns: a list of dictionary with the coordinates (x1, y1) and (x2, y2) for all the faces found
-        """
-        faces = extract_faces(img_path=self.img, detector_backend=self.backend)
-        coordinates = list()
+        self.__clean_temp_file()
 
-        for face in faces:
-            entry = dict()
-            facial_area = face['facial_area']
-
-            # Set face points
-            entry['x1'] = facial_area['x']
-            entry['y1'] = facial_area['y']
-            entry['x2'] = facial_area['x'] + facial_area['w']
-            entry['y2'] = facial_area['y'] + facial_area['h']
-
-            coordinates.append(entry)
-
-        return coordinates
-
-
-class FaceRepresentationManager:
-
-    def __init__(self, container_name=CONTAINER_NAME) -> None:
-        self.blob_manager = BlobManager(container_name)  # Get an instance of the blob manager
+        return is_username_free
+    
 
     @staticmethod
     def __clean_temp_file():
@@ -111,91 +99,47 @@ class FaceRepresentationManager:
         if isfile(REPRESENTATIONS_BLOB):
             remove(REPRESENTATIONS_BLOB)
 
-    def upload_representation(self, rep: FaceRepresentation) -> bool:
+
+    def __register_username(self, username) -> bool:
         """
-            This method is used to upload the FaceRepresentation
-            to the Blob storage on Azure.
-                - rep:      the FaceRepresentation to upload
-                - Return:   a boolean value
+            - username: the username to check
+            - Return: This method returns True if the username is
+            already registered, False otherwise
         """
-        if rep.username is SKIP or rep.info is SKIP or rep.embedding is SKIP:
-            raise ValueError('Could not perform this action. Username and info are setted as SKIP, or embedding is '
-                             'not evaluatd')
+        is_downloaded = self.persistence_manager.download(USERNAMES_BLOB)
+        usernames_set = set()
 
-        # Register the username if it is not duplicated
-        is_username_free = self.__register_username(rep.username)
+        if is_downloaded:
+            with open(USERNAMES_BLOB, 'rb') as f:
+                usernames_set: set = pickle.loads(f.read())
 
-        if is_username_free:
-            # Read the pkl representation file
-            is_downloadable = self.blob_manager.download_blob_to_file(REPRESENTATIONS_BLOB)
+        flag = username not in usernames_set
 
-            # If the data can be downloaded, open the file and extract 
-            # the FaceRepresentations using pickle
-            if is_downloadable:
-                with open(REPRESENTATIONS_BLOB, 'rb') as f:
-                    representations: list = pickle.loads(f.read())
-            else:
-                # Instantiate an empty list if the file is not created
-                representations: list = list()
+        if flag:
+            usernames_set.add(username)
 
-            # Append the new representation    
-            representations.append(rep)
+            with open(USERNAMES_BLOB, 'wb') as f:
+                f.write(pickle.dumps(usernames_set))
 
-            # Update the pickle file
-            with open(REPRESENTATIONS_BLOB, 'wb') as f:
-                f.write(pickle.dumps(representations))
+            self.persistence_manager.upload(USERNAMES_BLOB)
 
-            self.blob_manager.upload_blob(REPRESENTATIONS_BLOB)
+        return flag
 
-        self.__clean_temp_file()
 
-        return is_username_free
+class FaceRecognizer: 
+    def __init__(self, persistence_manager: ObjectPersistenceManager, source_representations: list) -> None:
+        """
+            - persistence_manager: the specific storage manager, used to retrieve the stored representations
+            - source_representations: a list of unknown representations
+        """
+        self.persistence_manager = persistence_manager
+        self.source_representations = source_representations
 
-    def remove_representation_by_username(self, username):
-        # not implemented yet
-        pass
-
-    def verify_identity(self, source_representations: list, target_username: str,
-                            model='Facenet512', metric='euclidean') -> bool:
-            """
-                This method is used to verify if the source representation corresponds
-                to the target representation identified by the username. It's a verification-like task.
-                    - source: the source list of representations to be verified
-                    - target_username: the unique id of the representation which will be evaluated against source
-                    - return: a boolean value according to the operation status
-                    - raise: StopIteration if the target_username does not exist
-            """
-            contains = False
-
-            if self.blob_manager.download_blob_to_file(REPRESENTATIONS_BLOB):
-                # Get the target representation
-                with open(REPRESENTATIONS_BLOB, 'rb') as f:
-                    all_representation: list = pickle.loads(f.read())
-
-                # Get if it exsists the unique representation with the target username
-                target: FaceRepresentation = next(rep for rep in all_representation if rep.username == target_username)
-
-                treshold = findThreshold(model, metric)
-                
-                found_distances: list = []
-
-                for source in source_representations:
-                    found_distances.append(findEuclideanDistance(source.embedding, target.embedding))
-
-                # If the min distance is less than the treshold value then the input 
-                # representation contains the target identity
-                contains = min(found_distances) <= treshold
-
-            self.__clean_temp_file()
-
-            return contains
-
-    def find_closest_representations(self, unknown_representations: list,
-                                     metric='euclidean', model='Facenet512') -> list:
+    def find_closest_representations(self, metric='euclidean', model='Facenet512') -> list:
         """
             This method is used to find the FaceRepresentation
             whose embeddings are the closest possible to the FaceRepresentation
-            setted as input of the class, during init operations
+            setted as input of the class during init operations
                 - metric:   the metric used to evaluate the distance between the representations.
                             [cosine, euclidean]
                 - return:   a list of the found identies from the input FaceRepresentation list
@@ -204,7 +148,7 @@ class FaceRepresentationManager:
         found_identities = list()
 
         tic = time.time()
-        is_downloaded = self.blob_manager.download_blob_to_file(REPRESENTATIONS_BLOB)
+        is_downloaded = self.persistence_manager.download(REPRESENTATIONS_BLOB)
         tac = time.time()
 
         if is_downloaded:
@@ -218,13 +162,13 @@ class FaceRepresentationManager:
             # against all the ones, already stored in the storage. It must be
             found_distances = list()
 
-            for i, unknown in enumerate(unknown_representations):
+            for i, unknown in enumerate(self.source_representations):
                 # For every unknown input representation, calculate the distances
                 # againt all the known representations
                 for j, known in enumerate(known_representations):
                     distance = findEuclideanDistance(known.embedding, unknown.embedding)
                     found_distances.append(distance)
-                    print(f'{i} : {j} - {distance}')
+                    print(f'{i} => {j} - {distance}')
 
                 # Find the index of the lowest distance
                 if len(found_distances) == 1:
@@ -246,28 +190,48 @@ class FaceRepresentationManager:
         self.__clean_temp_file()
 
         return found_identities
-
-    def __register_username(self, username) -> bool:
+    
+    def verify_identity(self, target_username: str, model='Facenet512', metric='euclidean') -> bool:
         """
-            - username: the username to check
-            - Return: This method returns True if the username is
-            already registered, False otherwise
+            This method is used to verify if the source representation corresponds
+            to the target representation identified by the username. It's a verification-like task.
+                - source: the source list of representations to be verified
+                - target_username: the unique id of the representation which will be evaluated against source                    - return: a boolean value according to the operation status
+                - raise: StopIteration if the target_username does not exist
+            """
+        contains = False
+
+        if self.persistence_manager.download(REPRESENTATIONS_BLOB):
+            # Get the target representation                
+            with open(REPRESENTATIONS_BLOB, 'rb') as f:
+                all_representation: list = pickle.loads(f.read())
+
+            # Get if it exsists the unique representation with the target username
+            target: FaceRepresentation = next(rep for rep in all_representation if rep.username == target_username)
+
+            treshold = findThreshold(model, metric)
+                
+            found_distances: list = []
+
+            for source in self.source_representations:
+                found_distances.append(findEuclideanDistance(source.embedding, target.embedding))
+
+            # If the min distance is less than the treshold value then the input 
+            # representation contains the target identity
+            contains = min(found_distances) <= treshold
+
+        self.__clean_temp_file()
+
+        return contains   
+    
+
+    @staticmethod
+    def __clean_temp_file():
         """
-        is_downloaded = self.blob_manager.download_blob_to_file(USERNAMES_BLOB)
-        usernames_set = set()
+            Class method used to clean temporary files
+        """
+        if isfile(USERNAMES_BLOB):
+            remove(USERNAMES_BLOB)
 
-        if is_downloaded:
-            with open(USERNAMES_BLOB, 'rb') as f:
-                usernames_set: set = pickle.loads(f.read())
-
-        flag = username not in usernames_set
-
-        if flag:
-            usernames_set.add(username)
-
-            with open(USERNAMES_BLOB, 'wb') as f:
-                f.write(pickle.dumps(usernames_set))
-
-            self.blob_manager.upload_blob(USERNAMES_BLOB)
-
-        return flag
+        if isfile(REPRESENTATIONS_BLOB):
+            remove(REPRESENTATIONS_BLOB)
