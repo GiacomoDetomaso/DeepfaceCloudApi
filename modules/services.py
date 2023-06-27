@@ -23,19 +23,24 @@ STATUS_FAIL = 'fail'
 STATUS_SUCCESS = 'success'
 
 # Defines default messages
-NO_JSON_MESSAGE = 'You must send a json request, or request you have sent is empty'
+NO_MULTIPART_MESSAGE = 'You must send a multipart request, or the request you have sent is empty'
 EMPTY_MESSAGE = 'Empty input set passed'
 ALL_VALUES_NOT_PASSED_MESSAGE = 'You must pass all values in order to perform this action'
-BASE64_ERROR_MESSAGE = 'Input image is not base64 encoded'
+EXTENSION_NOT_SUPPORTED_MESSAGE = 'The file you have sent is not an image. Check the supported extensions'
 
-# Defines json input param names
-JSON_IMG = 'img'
-JSON_USERNAME = 'username'
-JSON_IDENTITY = 'identity'
-JSON_INFO = 'info'
+# Defines input param names
+FIELD_IMG = 'img'
+FIELD_IDENTITY = 'identity'
+FIELD_INFO = 'info'
 
 # Path to temporary file
 TEMP_IMG = 'img.jpg'
+
+# Supported extensions
+SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp')
+
+# Request type
+MULTIPART_FORM_DATA = 'multipart/form-data'
 
 # A constant that defines the container of the blobs
 __CONTAINER_NAME = 'dfdb'
