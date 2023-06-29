@@ -1,6 +1,6 @@
 from deepface.commons.distance import findThreshold, findEuclideanDistance
 from numpy import argmin
-from modules.blobs import ObjectPersistenceManager
+from rules.blobs import ObjectPersistenceManager
 from os import remove
 from os.path import isfile
 
@@ -156,7 +156,7 @@ class FaceRecognizer:
             with open(REPRESENTATIONS_BLOB, 'rb') as f:
                 known_representations = pickle.loads(f.read())
 
-            treshold = findThreshold(model_name=model, distance_metric=metric)
+            treshold = findThreshold(model_name=model, distance_metric=metric) - 1.3
 
             # List that saves the distances scores of the i_th representation
             # against all the ones, already stored in the storage. It must be

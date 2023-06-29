@@ -1,10 +1,9 @@
 from flask import Flask, render_template, request, jsonify
-from json import loads
 from os import remove
 from os.path import isfile
 from werkzeug.datastructures import ImmutableDict
 
-from modules.services import (
+from rules.services import (
     # import common keys of json replies
     KEY_STATUS, KEY_MESSAGE, KEY_COORDINATES, KEY_IMG_B64,
     # import common status 
