@@ -2,7 +2,7 @@ from deepface.commons.distance import findThreshold, findEuclideanDistance
 from numpy import argmin
 from rules.blobs import ObjectPersistenceManager
 from os import remove
-from os.path import isfile
+from os.path import isfile, join
 
 import pickle
 import time
@@ -14,10 +14,10 @@ import time
 # the closest FaceRepresentation object.
 SKIP = 'skip'
 
-# A constant that defines the name of the blob that contains all the usernames
+# A constant that defines the name of the file that contains all the usernames
 USERNAMES_BLOB = 'usernames.pkl'
 
-# A constant that defines the name of the blob that contains all the representations
+# A constant that defines the name of the file that contains all the representations
 REPRESENTATIONS_BLOB = 'representations.pkl'
 
 class FaceRepresentation:
@@ -35,22 +35,104 @@ class FaceRepresentation:
         self.embedding = embedding
 
 
-class FaceRepresentationDeleter:
-    pass
+class FaceOperation:
+    def __init__(self, persistence_manager: ObjectPersistenceManager) -> None:
+        self.persistence_manager = persistence_manager
+        self.temp_download_folder = 'temp'
 
-class FaceRepresentationUploader:
+
+    @staticmethod
+    def _clean_temp_file(folder):
+        """
+            Class method used to clean temporary files
+        """
+        path = join(folder, USERNAMES_BLOB)
+
+        if isfile(path):
+            remove(path)
+
+        path = join(folder, REPRESENTATIONS_BLOB)
+
+        if isfile(path):
+            remove(path)
+        
+
+class FaceRepresentationDeleter(FaceOperation):
+    def __init__(self, persistence_manager: ObjectPersistenceManager, identity_to_delete) -> None:
+        """
+            - persistence_manager:  the specific storage manager, used to upload the FaceRepresentation
+            - identity_to_delete:   the identity to delete from the storage
+        """
+        super(FaceRepresentationDeleter, self).__init__(persistence_manager)
+        self.identity_to_delete = identity_to_delete
+
+    def delete_representation(self) -> bool:
+        """
+            This method is used to delete the specified face representation
+            identitfied by the idenitity provided as class-input.
+            - Return:   boolean value which represent the outcome of the operation
+            - Raise:    ValueError if the identity is not present. OSError if the update of the storage is unsuccessful
+        """
+        usernames_path = join(self.temp_download_folder, USERNAMES_BLOB)
+        representations_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
+
+        ret = False
+
+        is_downloadable = self.persistence_manager.download(USERNAMES_BLOB, self.temp_download_folder)
+        ret = is_downloadable
+
+        if is_downloadable:
+            is_downloadable = self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder)
+            ret = is_downloadable
+            
+            if is_downloadable:
+                with open(usernames_path, 'rb') as f1, open(representations_path, 'rb') as f2:
+                    usernames: set = pickle.loads(f1.read())
+                    print(usernames)
+                    representations: list = pickle.loads(f2.read())
+                    
+                    # If the identity is not present into the storage a ValueError is raised
+                    if self.identity_to_delete not in usernames:
+                        raise ValueError
+
+                    rep_to_remove = next(rep for rep in representations if rep.username == self.identity_to_delete)
+
+                    # Remove the identity and the representation
+                    usernames.remove(self.identity_to_delete)
+                    representations.remove(rep_to_remove)
+
+                    print(len(representations))
+            
+                with open(usernames_path, 'wb') as f1, open(representations_path, 'wb') as f2:
+                    f1.write(pickle.dumps(usernames))
+                    f2.write(pickle.dumps(representations))
+
+                with open(usernames_path, 'rb') as f1:
+                    print(pickle.loads(f1.read()))
+
+                self.persistence_manager.upload(usernames_path)
+                self.persistence_manager.upload(representations_path)
+      
+                ret = True 
+            
+        self._clean_temp_file(self.temp_download_folder)
+        
+        return ret
+    
+
+class FaceRepresentationUploader(FaceOperation):
     def __init__(self, persistence_manager: ObjectPersistenceManager, rep: FaceRepresentation) -> None:
         """
             - persistence_manager: the specific storage manager, used to upload the FaceRepresentation
             - rep: the representation to upload
         """
-        self.persistence_manager = persistence_manager
+        super(FaceRepresentationUploader, self).__init__(persistence_manager)
         self.rep = rep
 
         if rep.username is SKIP or rep.info is SKIP or rep.embedding is SKIP:
             raise ValueError('Could not perform this action. Username and info are setted as SKIP, or embedding is '
                              'not evaluated')
-
+        
 
     def upload_representation(self) -> bool:
         """
@@ -63,12 +145,14 @@ class FaceRepresentationUploader:
 
         if is_username_free:
             # Read the pkl representation file
-            is_downloadable = self.persistence_manager.download(REPRESENTATIONS_BLOB)
+            is_downloadable = self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder)
+
+            local_representation_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
 
             # If the data can be downloaded, open the file and extract 
             # the FaceRepresentations using pickle
             if is_downloadable:
-                with open(REPRESENTATIONS_BLOB, 'rb') as f:
+                with open(local_representation_path, 'rb') as f:
                     representations: list = pickle.loads(f.read())
             else:
                 # Instantiate an empty list if the file is not created
@@ -78,27 +162,15 @@ class FaceRepresentationUploader:
             representations.append(self.rep)
 
             # Update the pickle file
-            with open(REPRESENTATIONS_BLOB, 'wb') as f:
+            with open(local_representation_path, 'wb') as f:
                 f.write(pickle.dumps(representations))
 
-            self.persistence_manager.upload(REPRESENTATIONS_BLOB)
+            self.persistence_manager.upload(local_representation_path)
 
-        self.__clean_temp_file()
+        self._clean_temp_file(self.temp_download_folder)
 
         return is_username_free
     
-
-    @staticmethod
-    def __clean_temp_file():
-        """
-            Class method used to clean temporary files
-        """
-        if isfile(USERNAMES_BLOB):
-            remove(USERNAMES_BLOB)
-
-        if isfile(REPRESENTATIONS_BLOB):
-            remove(REPRESENTATIONS_BLOB)
-
 
     def __register_username(self, username) -> bool:
         """
@@ -106,11 +178,13 @@ class FaceRepresentationUploader:
             - Return: This method returns True if the username is
             already registered, False otherwise
         """
-        is_downloaded = self.persistence_manager.download(USERNAMES_BLOB)
+        is_downloaded = self.persistence_manager.download(USERNAMES_BLOB, self.temp_download_folder)
         usernames_set = set()
 
+        local_usernames_path = join(self.temp_download_folder, USERNAMES_BLOB)
+
         if is_downloaded:
-            with open(USERNAMES_BLOB, 'rb') as f:
+            with open(local_usernames_path, 'rb') as f:
                 usernames_set: set = pickle.loads(f.read())
 
         flag = username not in usernames_set
@@ -118,22 +192,23 @@ class FaceRepresentationUploader:
         if flag:
             usernames_set.add(username)
 
-            with open(USERNAMES_BLOB, 'wb') as f:
+            with open(local_usernames_path, 'wb') as f:
                 f.write(pickle.dumps(usernames_set))
 
-            self.persistence_manager.upload(USERNAMES_BLOB)
+            self.persistence_manager.upload(local_usernames_path)
 
         return flag
 
 
-class FaceRecognizer: 
+class FaceRecognizer(FaceOperation): 
     def __init__(self, persistence_manager: ObjectPersistenceManager, source_representations: list) -> None:
         """
             - persistence_manager: the specific storage manager, used to retrieve the stored representations
             - source_representations: a list of unknown representations
         """
-        self.persistence_manager = persistence_manager
+        super(FaceRecognizer, self).__init__(persistence_manager)
         self.source_representations = source_representations
+
 
     def find_closest_representations(self, metric='euclidean', model='Facenet512') -> list:
         """
@@ -148,15 +223,17 @@ class FaceRecognizer:
         found_identities = list()
 
         tic = time.time()
-        is_downloaded = self.persistence_manager.download(REPRESENTATIONS_BLOB)
+        is_downloaded = self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder)
         tac = time.time()
 
+        download_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
+        
         if is_downloaded:
             print(f'Downloaded representations data in {str(tac - tic)} seconds')
-            with open(REPRESENTATIONS_BLOB, 'rb') as f:
+            with open(download_path, 'rb') as f:
                 known_representations = pickle.loads(f.read())
 
-            treshold = findThreshold(model_name=model, distance_metric=metric) - 1.3
+            treshold = findThreshold(model_name=model, distance_metric=metric)
 
             # List that saves the distances scores of the i_th representation
             # against all the ones, already stored in the storage. It must be
@@ -168,7 +245,7 @@ class FaceRecognizer:
                 for j, known in enumerate(known_representations):
                     distance = findEuclideanDistance(known.embedding, unknown.embedding)
                     found_distances.append(distance)
-                    print(f'{i} => {j} - {distance}')
+                    print(f'{i} => {j}: {known.username} - distance: {distance}')
 
                 # Find the index of the lowest distance
                 if len(found_distances) == 1:
@@ -181,16 +258,17 @@ class FaceRecognizer:
                     # Get the index of the minimum distance found during the process and extract the representation
                     entry: FaceRepresentation = known_representations[min_dist_index]
                     found_identities.append(f'{entry.username} - {entry.info}')
-                    print(f'Generated identity for {i} - with min distance {found_distances[min_dist_index]}')
+                    print(f'Generated identity for {i} - {min_dist_index} with min distance {found_distances[min_dist_index]}')
                 
                 # Clear the list at the end of cycle to save 
                 # the distances for the next input representation
                 found_distances.clear()
 
-        self.__clean_temp_file()
-
+        self._clean_temp_file(self.temp_download_folder)
+        
         return found_identities
     
+
     def verify_identity(self, target_username: str, model='Facenet512', metric='euclidean') -> bool:
         """
             This method is used to verify if the source representation corresponds
@@ -201,9 +279,11 @@ class FaceRecognizer:
             """
         contains = False
 
-        if self.persistence_manager.download(REPRESENTATIONS_BLOB):
+        if self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder):
+            download_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
+            
             # Get the target representation                
-            with open(REPRESENTATIONS_BLOB, 'rb') as f:
+            with open(download_path, 'rb') as f:
                 all_representation: list = pickle.loads(f.read())
 
             # Get if it exsists the unique representation with the target username
@@ -220,18 +300,6 @@ class FaceRecognizer:
             # representation contains the target identity
             contains = min(found_distances) <= treshold
 
-        self.__clean_temp_file()
+        self._clean_temp_file(self.temp_download_folder)
 
         return contains   
-    
-
-    @staticmethod
-    def __clean_temp_file():
-        """
-            Class method used to clean temporary files
-        """
-        if isfile(USERNAMES_BLOB):
-            remove(USERNAMES_BLOB)
-
-        if isfile(REPRESENTATIONS_BLOB):
-            remove(REPRESENTATIONS_BLOB)

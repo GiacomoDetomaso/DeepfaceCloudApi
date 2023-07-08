@@ -1,5 +1,5 @@
-from rules.operations import FaceRepresentation, FaceRecognizer, FaceRepresentationUploader
-from rules.blobs import AzureBlobManager
+from rules.operations import FaceRepresentation, FaceRecognizer, FaceRepresentationUploader, FaceRepresentationDeleter
+from rules.blobs import AzureBlobManager, LocalFileManager
 from base64 import b64encode
 from cv2 import imread, imwrite, rectangle
 from os.path import isfile
@@ -37,7 +37,7 @@ FIELD_INFO = 'info'
 TEMP_IMG = 'img.jpg'
 
 # Supported extensions
-SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp')
+SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.jfif')
 
 # Request type
 MULTIPART_FORM_DATA = 'multipart/form-data'
@@ -46,7 +46,7 @@ MULTIPART_FORM_DATA = 'multipart/form-data'
 __CONTAINER_NAME = 'dfdb'
 
 # The manager to execute all the operations regarding a FaceRepresentation
-_manager = AzureBlobManager(container_name=__CONTAINER_NAME, connection_string='DefaultEndpointsProtocol=https;AccountName=deepfacestorage;AccountKey=0yUt1JRe9VqaCdd8JPjP7ZZF8ZjoqfhW9M0iehzYlXsbUFUdAA1viRgr4PDjY3Zwk0g4tITALMSy+ASt2fUrXw==;EndpointSuffix=core.windows.net')
+_manager = AzureBlobManager(__CONTAINER_NAME)
 
 
 def upload_representation(file_name: str, username: str, info: str) -> dict:
@@ -81,6 +81,30 @@ def upload_representation(file_name: str, username: str, info: str) -> dict:
         message = {KEY_MESSAGE: 'Could not create a representation: no faces detected',
                    KEY_STATUS: STATUS_FAIL}
 
+    return message
+
+
+def remove_representation(id: str) -> dict:
+    """
+        This method is used to delete the specified representation
+            - id:   the id of the representation to delete
+    """
+    deleter = FaceRepresentationDeleter(_manager, id)
+
+    try:
+        if deleter.delete_representation():
+            message = {KEY_MESSAGE: 'Representation removed',
+                       KEY_STATUS: STATUS_SUCCESS}
+        else:
+            message = {KEY_MESSAGE: 'Could not remove the representation: internal issues',
+                       KEY_STATUS: STATUS_FAIL}
+    except ValueError:
+        message = {KEY_MESSAGE: 'The specified id does not exist',
+                    KEY_STATUS: STATUS_FAIL}
+    except OSError:
+        message = {KEY_MESSAGE: 'Could not create a representation: internal errors',
+                   KEY_STATUS: STATUS_FAIL}
+        
     return message
 
 

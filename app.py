@@ -17,7 +17,7 @@ from rules.services import (
     # import json requests param values
     FIELD_IMG, FIELD_INFO, FIELD_IDENTITY, 
     # import the services of the facade
-    upload_representation, find_representations, verify_representation, extract_faces  
+    upload_representation, remove_representation, find_representations, verify_representation, extract_faces  
 )
 
 app = Flask(__name__)
@@ -258,6 +258,26 @@ def identify():
 
         # Clean temporary file
         if isfile(temp_file_name): remove(temp_file_name)  
+
+    return jsonify(message)
+
+
+@app.route('/remove', methods=['POST'])
+def remove_rep():
+    message = {KEY_MESSAGE: NO_MULTIPART_MESSAGE,
+               KEY_STATUS: STATUS_FAIL}
+
+    if request.content_type.find(MULTIPART_FORM_DATA) != -1:
+        print(MULTIPART_FORM_DATA)
+        input_arg: dict = request.form
+
+        if input_arg is None:
+            return jsonify({KEY_MESSAGE: EMPTY_MESSAGE,
+                            KEY_STATUS: STATUS_FAIL})
+        
+        # Get the input value from the form fields 
+        username: str = input_arg.get(FIELD_IDENTITY)
+        message = remove_representation(username)
 
     return jsonify(message)
 
