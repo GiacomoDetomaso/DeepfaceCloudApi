@@ -1,3 +1,5 @@
 azure-storage-blob
 azure-identity
 deepface
+protobuf==3.20.*
+firebase_admin

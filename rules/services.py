@@ -46,7 +46,7 @@ MULTIPART_FORM_DATA = 'multipart/form-data'
 __CONTAINER_NAME = 'dfdb'
 
 # The manager to execute all the operations regarding a FaceRepresentation
-_manager = AzureBlobManager(__CONTAINER_NAME)
+_manager = LocalFileManager(__CONTAINER_NAME)
 
 
 def upload_representation(file_name: str, username: str, info: str) -> dict:

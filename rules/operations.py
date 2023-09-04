@@ -3,6 +3,7 @@ from numpy import argmin
 from rules.blobs import ObjectPersistenceManager
 from os import remove
 from os.path import isfile, join
+from pandas import DataFrame
 
 import pickle
 import time
@@ -14,14 +15,10 @@ import time
 # the closest FaceRepresentation object.
 SKIP = 'skip'
 
-# A constant that defines the name of the file that contains all the usernames
-USERNAMES_BLOB = 'usernames.pkl'
-
 # A constant that defines the name of the file that contains all the representations
 REPRESENTATIONS_BLOB = 'representations.pkl'
 
 class FaceRepresentation:
-
     def __init__(self, username=SKIP, info=SKIP, embedding=SKIP) -> None:
         """
             - username: the identity of the representation
@@ -34,27 +31,39 @@ class FaceRepresentation:
         self.info = info
         self.embedding = embedding
 
+    def __str__(self) -> str:
+        return f'{self.username} - {self.info}'
+    
 
 class FaceOperation:
     def __init__(self, persistence_manager: ObjectPersistenceManager) -> None:
         self.persistence_manager = persistence_manager
         self.temp_download_folder = 'temp'
 
-
     @staticmethod
     def _clean_temp_file(folder):
         """
             Class method used to clean temporary files
         """
-        path = join(folder, USERNAMES_BLOB)
-
-        if isfile(path):
-            remove(path)
-
         path = join(folder, REPRESENTATIONS_BLOB)
 
         if isfile(path):
             remove(path)
+    
+    @classmethod
+    def get_dataframe_from_representations(cls, reps: list):
+        """
+            This class method is used to cast a list of face representations
+            in a pandas Dataframe that will be used to quickly check 
+            the status of the storage while Face operation are running
+        """
+        temp_list: list = []
+
+        for r in reps:
+            temp_list.append(vars(r))
+
+        return DataFrame(temp_list)
+    
         
 
 class FaceRepresentationDeleter(FaceOperation):
@@ -73,44 +82,35 @@ class FaceRepresentationDeleter(FaceOperation):
             - Return:   boolean value which represent the outcome of the operation
             - Raise:    ValueError if the identity is not present. OSError if the update of the storage is unsuccessful
         """
-        usernames_path = join(self.temp_download_folder, USERNAMES_BLOB)
         representations_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
 
         ret = False
 
-        is_downloadable = self.persistence_manager.download(USERNAMES_BLOB, self.temp_download_folder)
-        ret = is_downloadable
+        is_downloadable = self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder)
 
         if is_downloadable:
-            is_downloadable = self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder)
             ret = is_downloadable
             
             if is_downloadable:
-                with open(usernames_path, 'rb') as f1, open(representations_path, 'rb') as f2:
-                    usernames: set = pickle.loads(f1.read())
-                    print(usernames)
-                    representations: list = pickle.loads(f2.read())
+                with open(representations_path, 'rb') as f:
+                    representations: list = pickle.loads(f.read())
+                    df = self.get_dataframe_from_representations(representations)
                     
                     # If the identity is not present into the storage a ValueError is raised
-                    if self.identity_to_delete not in usernames:
+                    if self.identity_to_delete not in df['username'].values:
                         raise ValueError
 
                     rep_to_remove = next(rep for rep in representations if rep.username == self.identity_to_delete)
 
                     # Remove the identity and the representation
-                    usernames.remove(self.identity_to_delete)
                     representations.remove(rep_to_remove)
 
                     print(len(representations))
-            
-                with open(usernames_path, 'wb') as f1, open(representations_path, 'wb') as f2:
-                    f1.write(pickle.dumps(usernames))
-                    f2.write(pickle.dumps(representations))
 
-                with open(usernames_path, 'rb') as f1:
-                    print(pickle.loads(f1.read()))
+                # Update the files with the newest changes
+                with open(representations_path, 'wb') as f:
+                    f.write(pickle.dumps(representations))
 
-                self.persistence_manager.upload(usernames_path)
                 self.persistence_manager.upload(representations_path)
       
                 ret = True 
@@ -130,76 +130,59 @@ class FaceRepresentationUploader(FaceOperation):
         self.rep = rep
 
         if rep.username is SKIP or rep.info is SKIP or rep.embedding is SKIP:
-            raise ValueError('Could not perform this action. Username and info are setted as SKIP, or embedding is '
-                             'not evaluated')
+            raise ValueError('Could not perform this action. Username and info are setted as SKIP ',
+                             'or embedding is not evaluated')
         
 
     def upload_representation(self) -> bool:
         """
             This method is used to upload the FaceRepresentation
-            to the Blob storage on Azure.
-                - Return:   a boolean value
+            to the storage location.
+                - Raise:    OSError if the file does not exists, or a generic
+                            ValueError if the file could not be uploaded for generic issues
+                - Return:   a boolean value to determine the status of the upload
         """
-        # Register the username if it is not duplicated
-        is_username_free = self.__register_username(self.rep.username)
+        local_representation_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
 
-        if is_username_free:
-            # Read the pkl representation file
-            is_downloadable = self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder)
+        # If the data can be downloaded, open the file and extract data using pickle
+        if self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder):            
+            # Data extraction 
+            with open(local_representation_path, 'rb') as f:
+                representations: list = pickle.loads(f.read())
+        else:
+            # Instantiate an empty list if the file is not created
+            representations: list = list()
 
-            local_representation_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
+        # Append the new representation    
+        representations.append(self.rep)
 
-            # If the data can be downloaded, open the file and extract 
-            # the FaceRepresentations using pickle
-            if is_downloadable:
-                with open(local_representation_path, 'rb') as f:
-                    representations: list = pickle.loads(f.read())
-            else:
-                # Instantiate an empty list if the file is not created
-                representations: list = list()
+        # Control flags
+        duplicated_username = False
+        upload_status = False
 
-            # Append the new representation    
-            representations.append(self.rep)
+        # Check for duplicate usernames
+        if len(representations) > 1:
+            df = self.get_dataframe_from_representations(representations)
+            print("Current Dataframe:")
+            print(df)
 
-            # Update the pickle file
+            if True in df.duplicated(subset=['username']).values: 
+                print(df.duplicated(subset=['username']))
+                duplicated_username = True
+
+        # Upload the updated representations if no duplicates are detected
+        if not duplicated_username:
             with open(local_representation_path, 'wb') as f:
                 f.write(pickle.dumps(representations))
 
-            self.persistence_manager.upload(local_representation_path)
+            self.persistence_manager.upload(local_representation_path)  
+            upload_status = True 
 
         self._clean_temp_file(self.temp_download_folder)
 
-        return is_username_free
+        return upload_status
+
     
-
-    def __register_username(self, username) -> bool:
-        """
-            - username: the username to check
-            - Return: This method returns True if the username is
-            already registered, False otherwise
-        """
-        is_downloaded = self.persistence_manager.download(USERNAMES_BLOB, self.temp_download_folder)
-        usernames_set = set()
-
-        local_usernames_path = join(self.temp_download_folder, USERNAMES_BLOB)
-
-        if is_downloaded:
-            with open(local_usernames_path, 'rb') as f:
-                usernames_set: set = pickle.loads(f.read())
-
-        flag = username not in usernames_set
-
-        if flag:
-            usernames_set.add(username)
-
-            with open(local_usernames_path, 'wb') as f:
-                f.write(pickle.dumps(usernames_set))
-
-            self.persistence_manager.upload(local_usernames_path)
-
-        return flag
-
-
 class FaceRecognizer(FaceOperation): 
     def __init__(self, persistence_manager: ObjectPersistenceManager, source_representations: list) -> None:
         """
