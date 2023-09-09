@@ -1,5 +1,5 @@
 from rules.operations import FaceRepresentation, FaceRecognizer, FaceRepresentationUploader, FaceRepresentationDeleter
-from rules.blobs import AzureBlobManager, LocalFileManager
+from rules.blobs import LocalFileManager, AzureBlobManager
 from base64 import b64encode
 from cv2 import imread, imwrite, rectangle
 from os.path import isfile
@@ -46,7 +46,7 @@ MULTIPART_FORM_DATA = 'multipart/form-data'
 __CONTAINER_NAME = 'dfdb'
 
 # The manager to execute all the operations regarding a FaceRepresentation
-_manager = LocalFileManager(__CONTAINER_NAME)
+_manager = AzureBlobManager(__CONTAINER_NAME)
 
 
 def upload_representation(file_name: str, username: str, info: str) -> dict:

@@ -1,5 +1,8 @@
 from abc import ABC, abstractmethod
-from os.path import isfile, join, split
+from os.path import isfile, join
+
+import pickle
+import os
 
 class ObjectPersistenceManager(ABC):
     """
@@ -14,26 +17,23 @@ class ObjectPersistenceManager(ABC):
         self.persistence_location = persistence_location
 
     @abstractmethod
-    def upload(self, file_path: str):
+    def upload(self, entity_name: str, data: any):
         """
-            Upload a local file to the persistence storage. The name of the uploaded entity
-            will be the same of the local file specified as input.
-            - file_path:    the path of the local file to upload
+            Upload a data to the persistence storage.
+            - entity_name:  the name of the entity to upload
+            - data:         the data to upload
             - raise:        OSError if the file does not exists, or a generic
                             ValueError if the file could not be uploaded for generic issues
         """
         pass
 
     @abstractmethod
-    def download(self, target_file: str, target_folder: str = './'):
+    def download(self, entity_name: str) -> object:
         """
-            This method is used to download a blob, specifing its name.
-            If the blob is downloaded, a local file with the downloaded
-            content will be created
-            - target_file:      the name of the target file to download. If it is successfuly downloaded
-                                this will be the name of the local file too
-            - target_folder:    the folder where the file will be downloaded
-            - raise:            ResourceNotFoundError if the specified blob doe not exists
+            This method is used to download an object stored in the 
+            specific persistence location and identified by its entity name
+            - entity_name:  the name of the entity to download
+            - raise:        ResourceNotFoundError if the specified blob doe not exists
         """
         pass
     
@@ -80,53 +80,46 @@ class AzureBlobManager(ObjectPersistenceManager):
 
         return blob_service_client.get_container_client(self.persistence_location)
 
-    def upload(self, file_path: str):
+    def upload(self, blob_name: str, data: any):
         """
-            Upload a local file to the Azure storage. The name of the uploaded entity
-            will be the same of the local file specified as input.
-            - file_name:    the name of the local file to upload
-            - raise:        OSError if the file does not exists, or a generic
-                            ValueError if the file could not be uploaded for generic issues
+            Upload data to the persistence storage: Azure blob manager.
+            - blob_name:    the name of the blob to upload
+            - data:         the data to upload
+            - raise:        ValueError if the file could not be uploaded for generic issues
         """
-        if not isfile(file_path):
-            raise OSError('The input file path does not exists')
-        
-        # Name the blob as the temporary file
-        # Split the path using the split function from os.path
-        # Take the last element as the blob name
-        blob_name = split(file_path)[-1]
+        # Write a temporary local file that will be uploaded to the blob storage
+        path: str = join('temp', blob_name)
+        with open(path, 'wb') as f: f.write(pickle.dumps(data))
 
-        with open(file_path, 'rb') as data:
-            blob = self.container_client.upload_blob(blob_name, data, overwrite=True)
+        # Upload the temporary file to the blob storage
+        with open(path, 'rb') as blob_data:
+            blob = self.container_client.upload_blob(blob_name, blob_data, overwrite=True)
 
+        if isfile(path) : os.remove(path)
+            
         if blob is None:
             raise ValueError('The upload of the blob failed')
         
-    def download(self, target_file: str, target_folder: str = './') -> bool:
+    def download(self, blob_name: str) -> object:
         """
-            This method is used to download a blob from the Azure Storage, specifing its name.
-            If the blob is downloaded, a local file with the downloaded
-            content will be created
-            - target_file:      the name of the target file to download. If it is successfuly downloaded
-                                this will be the name of the local file too
-            - target_folder:    the folder where the file will be downloaded
-            - raise:            ResourceNotFoundError if the specified blob doe not exists
+            This method is used to download a blob stored in the 
+            Azure blob manager and identified by its blob_name
+            - entity_name:  the name of the entity to download
+            - raise:        ResourceNotFoundError if the specified blob doe not exists
         """
-        can_download = True  # Specify if the resource is downloadable
 
         # Extract the stream data from the blob, handliing the exception if
         # the resource is not found
         try:
-            downloaded_blob = self.container_client.download_blob(target_file)
+            downloaded_blob = self.container_client.download_blob(blob_name)
         except ResourceNotFoundError:
-            can_download = False
+            downloaded_blob = None
 
         # If the resource is downloadable write the bytes
-        if can_download:
-            with open(join(target_folder, target_file), 'wb') as data:
-                data.write(downloaded_blob.readall())
+        if downloaded_blob is not None:
+            downloaded_blob = pickle.loads(downloaded_blob.readall())
 
-        return can_download
+        return downloaded_blob
     
     def remove(self):
         self.container_client.delete_container()
@@ -147,42 +140,39 @@ class LocalFileManager(ObjectPersistenceManager):
         super(LocalFileManager, self).__init__(persistence_location)
         self.folder = persistence_location
 
-    def upload(self, file_path: str):
+    def upload(self, file_name: str, data: any):
         """
-            Upload a local file to the local file system. The name of the uploaded entity
-            will be the same of the local file specified as input.
+            Upload data to the local file system.
             - file_name:    the name of the local file to upload
+            - data:         the data to upload
             - raise:        OSError if the file does not exists, or a generic
                             ValueError if the file could not be uploaded for generic issues
         """
-        if not isfile(file_path):
-            raise OSError('The input file path does not exists')
-        
+        # Create the folder to store data if it not exsist
         try:
             mkdir(self.folder)
         except FileExistsError:
             pass
         
-        with open(file_path, 'rb') as data_read:
-            with open(join(self.folder, split(file_path)[-1]), 'wb') as data_to_write:
-                data_to_write.write(data_read.read())
+        # Write a temporary local file that will be uploaded to the blob storage
+        path: str = join(self.folder, file_name)
+        with open(path, 'wb') as f: f.write(pickle.dumps(data))
 
-    def download(self, target_file: str, target_folder: str = './') -> bool:
+
+    def download(self, file_name: str) -> object:
         """
-            This method is used to download a blob from local file system, specifing its name.
-            If the blob is downloaded, a local file with the downloaded
-            content will be created
-            - target_file:      the name of the target file to download. If it is successfuly downloaded
-                                this will be the name of the local file too
-            - target_folder:    the folder where the file will be downloaded
-            - raise:            ResourceNotFoundError if the specified blob doe not exists
+            This method is used to download an object stored in the 
+            local file system and identified by its entity name
+            - entity_name:  the name of the entity to download
+            - raise:        FileNotFoundError if the specified blob doe not exists
         """
         try:
-            copyfile(join(self.persistence_location, target_file), join(target_folder, target_file))
+            with open(join(self.persistence_location, file_name), 'rb') as f:
+                    obj = pickle.loads(f.read())
         except FileNotFoundError:
-            return False
-    
-        return True
+            obj = None
+
+        return obj
     
     def remove(self):
         return super().remove()
@@ -194,7 +184,6 @@ from firebase_admin import initialize_app
 # Import dependencies for the Firestore specialization of the ObjectPersistenceManager
 from firebase_admin import firestore
 from google.cloud.firestore_v1.client import Client
-from pickle import loads
 
 class FirestoreDatabaseManager(ObjectPersistenceManager):
     """
@@ -214,7 +203,7 @@ class FirestoreDatabaseManager(ObjectPersistenceManager):
         """
         initialize_app()
         self.db: Client = firestore.client()
-    
+
 
 # Import dependencies for the FirebaseStorage specialization of the ObjectPersistenceManager
 from firebase_admin import storage
@@ -229,4 +218,7 @@ class FirebaseStorageManager(ObjectPersistenceManager):
             This method is used to initialize Firestore
         """
         initialize_app()
-        self.storage: Client = firestore.client()    
+        self.storage: Client = firestore.client()
+
+    def upload(self, file_path: str):
+        return super().upload(file_path)    

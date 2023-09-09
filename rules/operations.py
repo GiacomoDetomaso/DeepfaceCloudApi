@@ -82,41 +82,26 @@ class FaceRepresentationDeleter(FaceOperation):
             - Return:   boolean value which represent the outcome of the operation
             - Raise:    ValueError if the identity is not present. OSError if the update of the storage is unsuccessful
         """
-        representations_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
-
         ret = False
 
-        is_downloadable = self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder)
-
-        if is_downloadable:
-            ret = is_downloadable
+        representations: list  = self.persistence_manager.download(REPRESENTATIONS_BLOB)
+   
+        if representations is not None:
+            df = self.get_dataframe_from_representations(representations)
+                
+            # If the identity is not present into the storage a ValueError is raised
+            if self.identity_to_delete not in df['username'].values:                    
+                raise ValueError
             
-            if is_downloadable:
-                with open(representations_path, 'rb') as f:
-                    representations: list = pickle.loads(f.read())
-                    df = self.get_dataframe_from_representations(representations)
+            rep_to_remove = next(rep for rep in representations if rep.username == self.identity_to_delete)
+            # Remove the identity and the representation
+            representations.remove(rep_to_remove)
+            
+            print(len(representations))
+
+            self.persistence_manager.upload(REPRESENTATIONS_BLOB, representations)
+            ret = True 
                     
-                    # If the identity is not present into the storage a ValueError is raised
-                    if self.identity_to_delete not in df['username'].values:
-                        raise ValueError
-
-                    rep_to_remove = next(rep for rep in representations if rep.username == self.identity_to_delete)
-
-                    # Remove the identity and the representation
-                    representations.remove(rep_to_remove)
-
-                    print(len(representations))
-
-                # Update the files with the newest changes
-                with open(representations_path, 'wb') as f:
-                    f.write(pickle.dumps(representations))
-
-                self.persistence_manager.upload(representations_path)
-      
-                ret = True 
-            
-        self._clean_temp_file(self.temp_download_folder)
-        
         return ret
     
 
@@ -142,15 +127,10 @@ class FaceRepresentationUploader(FaceOperation):
                             ValueError if the file could not be uploaded for generic issues
                 - Return:   a boolean value to determine the status of the upload
         """
-        local_representation_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
+        representations: list = self.persistence_manager.download(REPRESENTATIONS_BLOB)
 
-        # If the data can be downloaded, open the file and extract data using pickle
-        if self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder):            
-            # Data extraction 
-            with open(local_representation_path, 'rb') as f:
-                representations: list = pickle.loads(f.read())
-        else:
-            # Instantiate an empty list if the file is not created
+        # Instantiate an empty list if no representations were previously saved
+        if representations is None:            
             representations: list = list()
 
         # Append the new representation    
@@ -163,6 +143,7 @@ class FaceRepresentationUploader(FaceOperation):
         # Check for duplicate usernames
         if len(representations) > 1:
             df = self.get_dataframe_from_representations(representations)
+            
             print("Current Dataframe:")
             print(df)
 
@@ -172,13 +153,8 @@ class FaceRepresentationUploader(FaceOperation):
 
         # Upload the updated representations if no duplicates are detected
         if not duplicated_username:
-            with open(local_representation_path, 'wb') as f:
-                f.write(pickle.dumps(representations))
-
-            self.persistence_manager.upload(local_representation_path)  
+            self.persistence_manager.upload(REPRESENTATIONS_BLOB, representations)  
             upload_status = True 
-
-        self._clean_temp_file(self.temp_download_folder)
 
         return upload_status
 
@@ -206,15 +182,11 @@ class FaceRecognizer(FaceOperation):
         found_identities = list()
 
         tic = time.time()
-        is_downloaded = self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder)
+        known_representations: list = self.persistence_manager.download(REPRESENTATIONS_BLOB)
         tac = time.time()
-
-        download_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
         
-        if is_downloaded:
+        if known_representations is not None:
             print(f'Downloaded representations data in {str(tac - tic)} seconds')
-            with open(download_path, 'rb') as f:
-                known_representations = pickle.loads(f.read())
 
             treshold = findThreshold(model_name=model, distance_metric=metric)
 
@@ -246,8 +218,6 @@ class FaceRecognizer(FaceOperation):
                 # Clear the list at the end of cycle to save 
                 # the distances for the next input representation
                 found_distances.clear()
-
-        self._clean_temp_file(self.temp_download_folder)
         
         return found_identities
     
@@ -262,13 +232,9 @@ class FaceRecognizer(FaceOperation):
             """
         contains = False
 
-        if self.persistence_manager.download(REPRESENTATIONS_BLOB, self.temp_download_folder):
-            download_path = join(self.temp_download_folder, REPRESENTATIONS_BLOB)
-            
-            # Get the target representation                
-            with open(download_path, 'rb') as f:
-                all_representation: list = pickle.loads(f.read())
+        all_representation: list = self.persistence_manager.download(REPRESENTATIONS_BLOB)
 
+        if all_representation is not None:
             # Get if it exsists the unique representation with the target username
             target: FaceRepresentation = next(rep for rep in all_representation if rep.username == target_username)
 
@@ -282,7 +248,5 @@ class FaceRecognizer(FaceOperation):
             # If the min distance is less than the treshold value then the input 
             # representation contains the target identity
             contains = min(found_distances) <= treshold
-
-        self._clean_temp_file(self.temp_download_folder)
 
         return contains   
