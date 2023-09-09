@@ -1,5 +1,5 @@
 from rules.operations import FaceRepresentation, FaceRecognizer, FaceRepresentationUploader, FaceRepresentationDeleter
-from rules.blobs import LocalFileManager, AzureBlobManager
+from .persistence.azure import AzureBlobManager
 from base64 import b64encode
 from cv2 import imread, imwrite, rectangle
 from os.path import isfile

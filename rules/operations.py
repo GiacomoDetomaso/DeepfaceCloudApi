@@ -1,11 +1,10 @@
 from deepface.commons.distance import findThreshold, findEuclideanDistance
 from numpy import argmin
-from rules.blobs import ObjectPersistenceManager
+from .persistence.opm import ObjectPersistenceManager
 from os import remove
 from os.path import isfile, join
 from pandas import DataFrame
 
-import pickle
 import time
 
 # If this constant is set, the input parameter is skipped. It is primarily used
