@@ -1,5 +1,5 @@
-from rules.operations import FaceRepresentation, FaceRecognizer, FaceRepresentationUploader, FaceRepresentationDeleter
-from .persistence.azure import AzureBlobManager
+from rules.operations import FaceRecognizer, FaceRepresentationUploader, FaceRepresentationDeleter
+from .persistence.local import LocalFileManager
 from base64 import b64encode
 from cv2 import imread, imwrite, rectangle
 from os.path import isfile
@@ -46,7 +46,7 @@ MULTIPART_FORM_DATA = 'multipart/form-data'
 __CONTAINER_NAME = 'dfdb'
 
 # The manager to execute all the operations regarding a FaceRepresentation
-_manager = AzureBlobManager(__CONTAINER_NAME)
+_manager = LocalFileManager(__CONTAINER_NAME)
 
 
 def upload_representation(file_name: str, username: str, info: str) -> dict:
@@ -65,7 +65,7 @@ def upload_representation(file_name: str, username: str, info: str) -> dict:
             message = {KEY_MESSAGE: 'Could not create a representation: multiple faces detected', 
                        KEY_STATUS: STATUS_FAIL}
         else:
-            face_representation = FaceRepresentation(username, info, embeddings[0])
+            face_representation = {'username': username, 'info': info, 'embedding': embeddings[0]}
             uploader = FaceRepresentationUploader(_manager, face_representation)
 
             # Upload the representation to the storage and check the result to
@@ -124,7 +124,7 @@ def find_representations(file_name: str) -> dict:
 
         # Populate the unknown FaceRepresentation list with the embedding generated
         for embedding in embeddings:
-            unknown_face_representations.append(FaceRepresentation(embedding=embedding))
+            unknown_face_representations.append({'embedding': embedding})
         
         recognizer = FaceRecognizer(_manager, unknown_face_representations)
         ids = recognizer.find_closest_representations()
@@ -165,7 +165,7 @@ def verify_representation(file_name: str, username: str) -> dict:
     print(f'{len(embeddings)} embeddings found in this image')
     
     for embedding in embeddings:
-        rep_list.append(FaceRepresentation(embedding=embedding))
+        rep_list.append({embedding: embedding})
     
     recognizer = FaceRecognizer(_manager, rep_list
                                 )

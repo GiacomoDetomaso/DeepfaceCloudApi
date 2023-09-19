@@ -11,7 +11,7 @@ class ObjectPersistenceManager(ABC):
             Parameters
             ----------
             persistence_location: str 
-                the name of the location where the object will be saved
+                The name of the location where the object will be saved.
         """
         self.persistence_location = persistence_location
 

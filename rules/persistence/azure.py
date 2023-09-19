@@ -20,7 +20,7 @@ class AzureBlobManager(ObjectPersistenceManager):
             Parameters
             ----------
             container_name: str       
-                The name of the container to point.
+                The name of the container where blobs will be uploaded.
 
             connection_string: str    
                 If specified, perform the connection using this string.
